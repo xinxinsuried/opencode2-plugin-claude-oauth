@@ -194,6 +194,10 @@ bunx tsc --noEmit
 
 Anthropic 的服务条款要求 Claude Pro / Max 的订阅 token 只在官方客户端使用。这是社区绕行方案，Anthropic 改动 OAuth 基础设施时随时可能失效。自行斟酌。
 
+## 社区
+
+[linux.do](https://linux.do) 是一个好社区。
+
 ## License
 
 MIT
