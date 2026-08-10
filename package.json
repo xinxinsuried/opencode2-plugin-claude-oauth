@@ -1,0 +1,20 @@
+{
+  "name": "opencode2-plugin-claude-oauth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "opencode2 plugin: Anthropic Claude Pro/Max OAuth login",
+  "license": "MIT",
+  "repository": "github:xinxinsuried/opencode2-plugin-claude-oauth",
+  "type": "module",
+  "exports": {
+    ".": "./server.ts",
+    "./server": "./server.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "next"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
