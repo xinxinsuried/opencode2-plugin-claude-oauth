@@ -145,6 +145,8 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 | 客户端指纹 | `user-agent: claude-cli/…`、`x-app: cli`、`x-stainless-*`、`X-Claude-Code-Session-Id` |
 | system prompt | 第一块强制为 Claude Code 身份串；剥掉 opencode 品牌段落；补 `x-anthropic-billing-header` 校验串 |
 | 工具名 | `glob` → `mcp_Glob`（Claude Code 用 PascalCase，小写裸名会被判定为第三方客户端），响应流里再还原 |
+| 工具顺序 | 按 name 稳定排序——MCP 服务器异步连接导致顺序每会话不同，排序后工具段在缓存里字节一致，跨会话直接命中 |
+| 缓存 TTL | 所有 `cache_control` 断点统一补 `ttl: "1h"`（与 omp/Claude Code 一致），不依赖 beta 的隐式默认 |
 | URL | `/v1/messages` 补 `?beta=true` |
 
 响应侧在 `session.hook("http.response")`：还原工具名；抓 `anthropic-ratelimit-unified-*` 头刷新限额快照；碰到 long-context / extra-usage 报错时记下惹事的 beta，下一次请求自动不带它。
@@ -163,6 +165,8 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 | `ANTHROPIC_BETA_FLAGS` | 逗号分隔，完全覆盖默认 beta 列表 |
 | `CLAUDE_OAUTH_SYSTEM_IDENTITY` | 第一块 system prompt 的身份串 |
 | `CLAUDE_OAUTH_TOOL_PREFIX` | 设为 `0` 关掉工具名重写 |
+| `CLAUDE_OAUTH_SORT_TOOLS` | 设为 `0` 关掉工具按 name 排序 |
+| `CLAUDE_OAUTH_CACHE_TTL` | 缓存保留期，默认 `1h`；设为 `5m` 退回短缓存 |
 | `CLAUDE_OAUTH_USAGE` | 设为 `0` 关掉限额侧边栏 |
 | `CLAUDE_OAUTH_CLIENT_ID` / `CLAUDE_OAUTH_AUTHORIZE_URL` / `CLAUDE_OAUTH_TOKEN_URL` / `CLAUDE_OAUTH_REDIRECT_URI` | 上游端点变了时应急覆盖 |
 

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import {
   BASE_BETAS,
+  CACHE_TTL,
   CCH_POSITIONS,
   CCH_SALT,
   CC_ENTRYPOINT,
@@ -12,6 +13,7 @@ import {
   TEXT_REPLACEMENTS,
   TOOL_PREFIX,
   TOOL_PREFIX_ENABLED,
+  TOOL_SORT_ENABLED,
   USER_AGENT,
 } from "./config.ts"
 
@@ -204,6 +206,41 @@ export function rewriteBody(raw: string): string {
       })
     }
   }
+
+  // MCP servers connect asynchronously, so opencode's tool order is not stable
+  // between sessions. A byte-identical tools segment is what keeps Anthropic's
+  // tools cache entry alive — sort by name (the rename above already ran, so the
+  // order matches the wire form).
+  if (TOOL_SORT_ENABLED && Array.isArray(body.tools)) {
+    ;(body.tools as Array<{ name?: unknown }>).sort((a, b) => {
+      const na = typeof a?.name === "string" ? a.name : ""
+      const nb = typeof b?.name === "string" ? b.name : ""
+      return na < nb ? -1 : na > nb ? 1 : 0
+    })
+  }
+
+  // Stamp the long retention on every ephemeral breakpoint, mirroring omp's
+  // per-request ttl:"1h" instead of relying on the beta's implicit default.
+  const longTtl = { type: "ephemeral", ttl: CACHE_TTL }
+  const forceCacheTtl = (value: unknown): void => {
+    if (!value || typeof value !== "object") return
+    if (Array.isArray(value)) {
+      for (const item of value) forceCacheTtl(item)
+      return
+    }
+    const record = value as Record<string, unknown>
+    const control = record.cache_control
+    if (control && typeof control === "object" && (control as { type?: unknown }).type === "ephemeral") {
+      record.cache_control = { ...longTtl }
+    }
+    // A JSON-Schema property legitimately named `cache_control` lives inside
+    // tool input schemas; do not descend there.
+    for (const [key, nested] of Object.entries(record)) {
+      if (key === "input_schema") continue
+      forceCacheTtl(nested)
+    }
+  }
+  forceCacheTtl(body)
 
   return JSON.stringify(body)
 }

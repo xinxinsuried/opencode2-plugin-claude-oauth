@@ -99,6 +99,19 @@ export function usageEnabled(options?: Readonly<Record<string, unknown>>): boole
   return options?.usage !== false
 }
 
+/**
+ * Stable tool ordering keeps the tools cache segment byte-identical between
+ * sessions (MCP servers connect asynchronously). Set `CLAUDE_OAUTH_SORT_TOOLS=0`
+ * to keep opencode's original order.
+ */
+export const TOOL_SORT_ENABLED = env("CLAUDE_OAUTH_SORT_TOOLS") !== "0"
+
+/**
+ * Ephemeral cache retention stamped on every breakpoint, mirroring Claude
+ * Code / omp's 1h default. `CLAUDE_OAUTH_CACHE_TTL=5m` opts back to short.
+ */
+export const CACHE_TTL = env("CLAUDE_OAUTH_CACHE_TTL") === "5m" ? "5m" : "1h"
+
 /** Paragraph anchors that identify opencode-branded system-prompt sections. */
 export const PARAGRAPH_REMOVAL_ANCHORS = ["opencode.ai/docs", "github.com/sst/opencode", "github.com/anomalyco/opencode"]
 
