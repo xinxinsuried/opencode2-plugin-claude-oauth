@@ -90,6 +90,15 @@ export const TOOL_PREFIX = "mcp_"
 /** Tool renaming is on by default; set to "0" to send opencode's raw tool names. */
 export const TOOL_PREFIX_ENABLED = env("CLAUDE_OAUTH_TOOL_PREFIX") !== "0"
 
+/**
+ * Rate-limit sidebar. On by default; `options.usage: false` on the plugin
+ * entry or `CLAUDE_OAUTH_USAGE=0` turns it off on both the server and TUI half.
+ */
+export function usageEnabled(options?: Readonly<Record<string, unknown>>): boolean {
+  if (env("CLAUDE_OAUTH_USAGE") === "0") return false
+  return options?.usage !== false
+}
+
 /** Paragraph anchors that identify opencode-branded system-prompt sections. */
 export const PARAGRAPH_REMOVAL_ANCHORS = ["opencode.ai/docs", "github.com/sst/opencode", "github.com/anomalyco/opencode"]
 

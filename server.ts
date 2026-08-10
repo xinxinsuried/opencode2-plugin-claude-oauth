@@ -1,9 +1,10 @@
 import { Credential, Integration, Plugin } from "@opencode-ai/plugin"
 import { accounts, type ClaudeCodeAccount } from "./src/claude-code.ts"
-import { INTEGRATION_ID, METHOD, PROVIDER_ID } from "./src/config.ts"
+import { INTEGRATION_ID, METHOD, PROVIDER_ID, usageEnabled } from "./src/config.ts"
 import { authorization, exchange, refresh } from "./src/oauth.ts"
 import { stripToolPrefix } from "./src/stream.ts"
 import { applyHeaders, noteBetaRejection, rewriteBody } from "./src/transform.ts"
+import { fetchUsage, fromHeaders, read as readUsage, USAGE_TTL, write as writeUsage } from "./src/usage.ts"
 
 type Tokens = { access: string; refresh: string; expires: number }
 
@@ -42,6 +43,24 @@ export default Plugin.define({
      * while leaving plain API-key setups untouched.
      */
     const state = { oauth: false }
+    const usage = usageEnabled(context.options)
+    /** Aborts the event subscription and any in-flight usage fetch on dispose. */
+    const watching = new AbortController()
+
+    /**
+     * Header capture only starts once a request has gone out, so the snapshot
+     * is seeded from the REST endpoint too. `force` is for a fresh login,
+     * where the cached numbers belong to the previous account.
+     */
+    const seedUsage = async (force: boolean) => {
+      if (!usage) return
+      const existing = readUsage()
+      if (!force && existing && Date.now() - existing.fetchedAt < USAGE_TTL) return
+      const credential = await sync()
+      if (!credential) return
+      const snapshot = await fetchUsage(credential.access, watching.signal).catch(() => undefined)
+      if (snapshot) writeUsage(snapshot)
+    }
 
     const sync = async () => {
       const connection = await context.integration.connection.active(INTEGRATION_ID)
@@ -56,15 +75,31 @@ export default Plugin.define({
 
     await sync()
 
+    // Integrations are not necessarily registered by the time plugins set up,
+    // so the first seed retries until the connection resolves. Bounded: a
+    // logged-out user must not leave a timer running forever.
+    void (async () => {
+      for (const delay of [0, 3_000, 10_000, 30_000]) {
+        if (watching.signal.aborted) return
+        if (delay > 0) {
+          const pause = Promise.withResolvers<void>()
+          setTimeout(pause.resolve, delay)
+          await pause.promise
+        }
+        await seedUsage(false).catch(() => {})
+        if (readUsage()) return
+      }
+    })()
+
     // The catalog is rebuilt from a snapshot of `state`, so a login/logout has
     // to force a reload for the cost overrides below to take effect.
-    const watching = new AbortController()
     void (async () => {
       try {
         for await (const event of context.event.subscribe({ signal: watching.signal })) {
           if (event.type !== "integration.connection.updated") continue
           if (event.data.integrationID !== INTEGRATION_ID) continue
           await sync()
+          void seedUsage(true)
           await context.catalog.reload()
         }
       } catch {
@@ -144,17 +179,24 @@ export default Plugin.define({
 
       await context.session.hook("http.request", async (input) => {
         if (input.model.providerID !== PROVIDER_ID) return
-        const resolved = await sync()
-        if (!resolved) return
 
         const request = input.request
+        // Core puts the resolved credential in `x-api-key` regardless of its
+        // type. A subscription token there is always wrong, so it is both the
+        // trigger and — when the connection lookup fails transiently — the
+        // fallback source for the bearer token.
+        const carried = request.headers.get("x-api-key")
+        const subscription = carried?.startsWith("sk-ant-oat") === true
+        const access = (await sync())?.access ?? (subscription ? carried : undefined)
+        if (!access) return
+
         const url = new URL(request.url)
         if (url.pathname.endsWith("/v1/messages") && !url.searchParams.has("beta")) {
           url.searchParams.set("beta", "true")
         }
 
         const headers = new Headers(request.headers)
-        applyHeaders(headers, resolved.access, input.model.id)
+        applyHeaders(headers, access, input.model.id)
 
         const raw = request.body ? await request.text() : undefined
         input.request = new Request(url, {
@@ -165,7 +207,15 @@ export default Plugin.define({
       }),
 
       await context.session.hook("http.response", async (input) => {
-        if (input.model.providerID !== PROVIDER_ID || !state.oauth) return
+        if (input.model.providerID !== PROVIDER_ID) return
+        if (!state.oauth && !input.request.headers.get("authorization")?.startsWith("Bearer sk-ant-oat")) return
+
+        // Every /v1/messages reply carries the live 5h/7d windows, so the
+        // sidebar stays current without spending a request of its own.
+        if (usage) {
+          const snapshot = fromHeaders(input.response.headers)
+          if (snapshot) writeUsage(snapshot)
+        }
 
         if (!input.response.ok) {
           const body = await input.response.clone().text().catch(() => "")

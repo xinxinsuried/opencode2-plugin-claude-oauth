@@ -11,6 +11,14 @@ $ opencode2 auth login
   └─ ANTHROPIC_API_KEY
 ```
 
+顺带在侧边栏显示订阅的 5 小时 / 7 天限额：
+
+```
+Claude limits
+├─ 5h  ███████░░░   66%  3h50m
+└─ 7d  ███░░░░░░░   34%  5d18h
+```
+
 opencode 1.3 之后官方移除了内置 Anthropic 登录，只留下 `key` / `env` 两种方式。opencode2 的 `anthropic` provider 和 integration 都还在，缺的只是 `oauth` method —— 这个插件把它加回来，并接管请求头和请求体，让订阅 token 能正常通过 `/v1/messages`。
 
 原型来自 [griffinmartin/opencode-claude-auth](https://github.com/griffinmartin/opencode-claude-auth)（opencode 1.x），本仓库按 opencode2 的插件 API 重写。
@@ -44,11 +52,22 @@ Windows 用正斜杠：`"C:/Users/you/.config/opencode/plugins/claude-oauth/serv
 >
 > 也可以不改配置：把入口文件直接放在 `~/.config/opencode/plugins/*.ts`（宿主会扫描 `{plugin,plugins}/*.{ts,js}`，**不递归子目录**）。用子目录的话就得走上面的配置写法。
 
-重启 opencode2，确认插件加载成功：
+侧边栏是 TUI 侧插件，另外在 `~/.config/opencode/cli.json` 的 `plugins` 里加上 `tui.tsx` 的绝对路径：
+
+```jsonc
+{
+  "plugins": ["C:/Users/you/.config/opencode/plugins/claude-oauth/tui.tsx"]
+}
+```
+
+重启后台服务，确认插件加载成功：
 
 ```bash
+opencode2 service restart
 opencode2 plugin list        # 应该能看到 claude-oauth
 ```
+
+> 服务端插件只有入口文件带 `?mtime=` 缓存失效，改了 `src/` 下的模块必须 `opencode2 service restart`，光存盘不会生效。
 
 ## 使用
 
@@ -80,11 +99,34 @@ TUI 里 `ctrl+p` → 切模型，`anthropic/*` 登录后自动出现在列表里
 
 订阅制不按 token 计费，所以插件会把 `anthropic/*` 的价格清零，session 里不会再显示虚构的花费。
 
-### 3. token 过期
+### 3. 限额侧边栏
+
+默认开启。侧边栏顶部显示订阅的两个滚动窗口：
+
+```
+Claude limits
+├─ 5h  ███████░░░   66%  3h50m
+└─ 7d  ███░░░░░░░   34%  5d18h
+```
+
+右边是距离该窗口重置还有多久。超过 75% 转警告色，超过 90% 或被 Anthropic 判为 `rejected` 转错误色。
+
+数据来自每次 `/v1/messages` 响应自带的 `anthropic-ratelimit-unified-*` 头，所以刷新它不额外花请求；开着 TUI 还没发过消息时，插件会用 `/api/oauth/usage` 补一次初始值。
+
+关掉它：
+
+```jsonc
+// opencode.jsonc 和 cli.json 都改成对象形式
+{ "plugins": [{ "package": "…/claude-oauth/server.ts", "options": { "usage": false } }] }
+```
+
+或者设 `CLAUDE_OAUTH_USAGE=0`，服务端和 TUI 侧一起关。
+
+### 4. token 过期
 
 不用管。凭据过期前 5 分钟，宿主会自己调插件注册的 `refresh` 换新 token 并落库。
 
-### 4. 退出登录
+### 5. 退出登录
 
 ```bash
 opencode2 auth login    # 重新选一次方式即可覆盖
@@ -105,7 +147,9 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 | 工具名 | `glob` → `mcp_Glob`（Claude Code 用 PascalCase，小写裸名会被判定为第三方客户端），响应流里再还原 |
 | URL | `/v1/messages` 补 `?beta=true` |
 
-响应侧在 `session.hook("http.response")`：还原工具名；碰到 long-context / extra-usage 报错时记下惹事的 beta，下一次请求自动不带它。
+响应侧在 `session.hook("http.response")`：还原工具名；抓 `anthropic-ratelimit-unified-*` 头刷新限额快照；碰到 long-context / extra-usage 报错时记下惹事的 beta，下一次请求自动不带它。
+
+限额快照落在 `~/.local/share/opencode/claude-oauth-usage.json`（原子写），TUI 侧插件每 4 秒读一次——两侧插件跑在不同进程里，没有共享通道，文件就是那道缝。
 
 ## 环境变量
 
@@ -119,6 +163,7 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 | `ANTHROPIC_BETA_FLAGS` | 逗号分隔，完全覆盖默认 beta 列表 |
 | `CLAUDE_OAUTH_SYSTEM_IDENTITY` | 第一块 system prompt 的身份串 |
 | `CLAUDE_OAUTH_TOOL_PREFIX` | 设为 `0` 关掉工具名重写 |
+| `CLAUDE_OAUTH_USAGE` | 设为 `0` 关掉限额侧边栏 |
 | `CLAUDE_OAUTH_CLIENT_ID` / `CLAUDE_OAUTH_AUTHORIZE_URL` / `CLAUDE_OAUTH_TOKEN_URL` / `CLAUDE_OAUTH_REDIRECT_URI` | 上游端点变了时应急覆盖 |
 
 ## 文件
@@ -131,6 +176,8 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 | `src/claude-code.ts` | 读本机 Claude Code 凭据（Keychain / 文件） |
 | `src/transform.ts` | 请求头、system prompt、billing 校验串、工具名前缀 |
 | `src/stream.ts` | 响应流里还原工具名（按行缓冲，不会被分片切坏） |
+| `src/usage.ts` | 限额窗口的解析、抓取与快照读写 |
+| `tui.tsx` | 侧边栏本体，注册 `sidebar.content` slot |
 
 ## 开发
 
