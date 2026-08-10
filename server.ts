@@ -91,8 +91,8 @@ export default Plugin.define({
       }
     })()
 
-    // The catalog is rebuilt from a snapshot of `state`, so a login/logout has
-    // to force a reload for the cost overrides below to take effect.
+    // A login/logout has to force a catalog reload so the provider's model
+    // catalog reflects the live credential state.
     void (async () => {
       try {
         for await (const event of context.event.subscribe({ signal: watching.signal })) {
@@ -166,15 +166,6 @@ export default Plugin.define({
           label: (current) =>
             typeof current.metadata?.plan === "string" ? `Claude ${current.metadata.plan}` : "Claude Code",
         })
-      }),
-
-      await context.catalog.transform((draft) => {
-        if (!state.oauth) return
-        const record = draft.provider.get(PROVIDER_ID)
-        if (!record) return
-        // Subscription usage is not metered per token; a priced catalog would
-        // report fictional spend for every session.
-        for (const id of record.models.keys()) draft.model.update(PROVIDER_ID, id, (model) => (model.cost = []))
       }),
 
       await context.session.hook("http.request", async (input) => {

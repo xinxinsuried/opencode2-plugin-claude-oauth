@@ -97,7 +97,7 @@ opencode2 run --model anthropic/claude-haiku-4-5 "reply with PONG"
 
 TUI 里 `ctrl+p` → 切模型，`anthropic/*` 登录后自动出现在列表里（15 个模型，来自 models.dev）。
 
-订阅制不按 token 计费，所以插件会把 `anthropic/*` 的价格清零，session 里不会再显示虚构的花费。
+订阅不按 token 计费，但会话花费仍按 models.dev 的标准价格 × 实际用量计算（输入全价、缓存读 0.1×、缓存写 1.25×、输出全价），与 opencode 其他 provider 的统计口径一致。
 
 ### 3. 限额侧边栏
 
@@ -170,7 +170,7 @@ opencode2 把 OAuth 凭据解析成 `x-api-key` 塞给 `@ai-sdk/anthropic`——
 
 | 文件 | 作用 |
 | --- | --- |
-| `server.ts` | 插件本体：注册 OAuth method、catalog 改写、两个 session hook |
+| `server.ts` | 插件本体：注册 OAuth method、两个 session hook |
 | `src/config.ts` | 全部常量与环境变量覆盖 |
 | `src/oauth.ts` | PKCE、授权 URL、code 交换、refresh |
 | `src/claude-code.ts` | 读本机 Claude Code 凭据（Keychain / 文件） |
